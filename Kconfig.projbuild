@@ -1,0 +1,13 @@
+menu "Wifi Smartconfig"
+
+    config SET_MAC_ADDRESS_OF_TARGET_AP
+        bool "whether set MAC address of target AP or not"
+        default y
+    config MAX_AP_COUNT
+        int "Total number of AP records"
+        default 3 
+        range 1 5
+        help
+            Total space for AP records kept in NVS
+
+endmenu
