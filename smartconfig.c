@@ -22,6 +22,7 @@
 #include "esp_smartconfig.h"
 #include "esp_mac.h"
 #include  "ap_record.h"
+#include  "smartconfig.h"
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
 static EventGroupHandle_t s_wifi_event_group;
 
@@ -37,6 +38,12 @@ static const char *TAG = "smartconfig_example";
 static bool storage_connect_tried=false; 
 static bool storage_connect_success=false; 
 
+
+
+static struct {
+    wifi_connect_success_callback callback;
+
+}wifi_state={0};
 
 static void smartconfig_example_task(void * parm);
 
@@ -163,6 +170,9 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     }else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
         if(storage_connect_tried==true)
             storage_connect_success=true;
+        //Now inform the user that connection complete
+        if(wifi_state.callback!=NULL)
+            wifi_state.callback();
         
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -220,7 +230,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-esp_err_t initialise_wifi(void){
+esp_err_t initialise_wifi(wifi_smartconfig_t* config){
     ESP_ERROR_CHECK( nvs_flash_init() );    //Should be removed if main initalizes it
     ESP_ERROR_CHECK(esp_netif_init());
     s_wifi_event_group = xEventGroupCreate();
@@ -240,6 +250,8 @@ esp_err_t initialise_wifi(void){
 
     esp_err_t ret=0;
     ret=ap_records_init();
+
+
     if(ret==ESP_ERR_NOT_FOUND){
         ESP_ERROR_CHECK(ap_records_save());
 
@@ -250,6 +262,10 @@ esp_err_t initialise_wifi(void){
 
     ESP_ERROR_CHECK(ap_records_load());
 
+    if(config!=NULL)
+        wifi_state.callback=config->callback;
+    else
+        wifi_state.callback=NULL;
     ap_records_print_all();
     return 0;
 }
