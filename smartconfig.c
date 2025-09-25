@@ -132,8 +132,9 @@ static void stored_ssid_connection_attemp(){
     }       
 
     //if not found then attemp connection by any wronng password so that disconnect event occurs
-    //This could crash bcausse there maynot be a single record
+    //This could crash bcausse there maynot be even a single record
     uint8_t wrong_password[]={1,2,3,4,5,6,7,8};
+    ESP_LOGI(TAG,"Wrong pass attempted to init the process anyway");
     wifi_connect_to_ap(ap_records[0].ssid,wrong_password,NULL);
 }
 
