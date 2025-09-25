@@ -169,15 +169,19 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         xEventGroupClearBits(s_wifi_event_group, CONNECTED_BIT);
     
     }else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
+    
+        
+    }
+    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        
         if(storage_connect_tried==true)
             storage_connect_success=true;
         //Now inform the user that connection complete
         if(wifi_state.callback!=NULL)
             wifi_state.callback();
-        
-    }
-    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         xEventGroupSetBits(s_wifi_event_group, CONNECTED_BIT);
+
+
     } else if (event_base == SC_EVENT && event_id == SC_EVENT_SCAN_DONE) {
         ESP_LOGI(TAG, "Scan done");
     } else if (event_base == SC_EVENT && event_id == SC_EVENT_FOUND_CHANNEL) {
