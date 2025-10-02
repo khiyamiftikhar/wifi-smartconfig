@@ -166,7 +166,10 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         //disconnet with assert anc device crasheed bcz wifi not init yer
         wifi_mode_t mode;
         esp_err_t err = esp_wifi_get_mode(&mode);
+        ESP_LOGI(TAG,"came here in disconnect");
         if (err != ESP_OK) {
+
+        ESP_LOGI(TAG,"came here in disconnect if");
           return;
         } 
 
