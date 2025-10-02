@@ -159,6 +159,17 @@ static void event_handler(void* arg, esp_event_base_t event_base,
      else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 
         //If previously success in connecting from local record, then again use local
+
+        
+        //This extra logic of getting mode and checking is added because at reboot after ota,
+        //The code resumed from here and called stored_ssid_connection_attemp() which further
+        //disconnet with assert anc device crasheed bcz wifi not init yer
+        wifi_mode_t mode;
+        esp_err_t err = esp_wifi_get_mode(&mode);
+        if (err != ESP_OK) {
+          return;
+        } 
+
         if(storage_connect_success == true)
             stored_ssid_connection_attemp();
 
