@@ -24,17 +24,15 @@
 #include  "ap_record.h"
 #include  "smartconfig.h"
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
-#define WIFI_SAFE_DISCONNECT()                                       \
-    do {                                                        \
-        wifi_mode_t mode;                                       \
-        esp_err_t err = esp_wifi_get_mode(&mode);               \
-        if (err != ESP_OK) {                                    \
-            ESP_LOGI(TAG, "came here in disconnect if");        \
-            return;                                             \
-        }                                                       \
+#define WIFI_API_CALL_PROCEED_CHECK(label)                  \
+    do {                                                    \
+        wifi_mode_t mode;                                   \
+        esp_err_t err = esp_wifi_get_mode(&mode);           \
+        if (err != ESP_OK) {                                \
+            ESP_LOGI(TAG, "came here in disconnect if");    \
+            goto label;                                     \
+        }                                                   \
     } while (0)
-
-
 
 
 
@@ -119,9 +117,15 @@ static void wifi_connect_to_ap(uint8_t* ssid,uint8_t*password,uint8_t* bssid){
             printf("\n");
         }*/
 
-        WIFI_SAFE_DISCONNECT();
+        //Checks if wifi api is initalized before proceeding to the calls
+        WIFI_API_CALL_PROCEED_CHECK(fail);
+        ESP_ERROR_CHECK(esp_wifi_disconnect());
         ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
         esp_wifi_connect();
+
+        fail:
+            return;
+
 }
 
 
@@ -180,7 +184,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         //The code resumed from here and called stored_ssid_connection_attemp() which further
         //disconnet with assert anc device crasheed bcz wifi not init yer
         
-
+        
         if(storage_connect_success == true)
             stored_ssid_connection_attemp();
 
