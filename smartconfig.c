@@ -118,12 +118,13 @@ static void wifi_connect_to_ap(uint8_t* ssid,uint8_t*password,uint8_t* bssid){
         }*/
 
         //Checks if wifi api is initalized before proceeding to the calls
-        WIFI_API_CALL_PROCEED_CHECK(fail);
+        WIFI_API_CALL_PROCEED_CHECK(if_fails);
         ESP_ERROR_CHECK(esp_wifi_disconnect());
+        WIFI_API_CALL_PROCEED_CHECK(if_fails);
         ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
         esp_wifi_connect();
 
-        fail:
+        if_fails:
             return;
 
 }
@@ -184,7 +185,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         //The code resumed from here and called stored_ssid_connection_attemp() which further
         //disconnet with assert anc device crasheed bcz wifi not init yer
         
-        
+
         if(storage_connect_success == true)
             stored_ssid_connection_attemp();
 
