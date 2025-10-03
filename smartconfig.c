@@ -24,6 +24,21 @@
 #include  "ap_record.h"
 #include  "smartconfig.h"
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
+#define WIFI_SAFE_DISCONNECT()                                       \
+    do {                                                        \
+        wifi_mode_t mode;                                       \
+        esp_err_t err = esp_wifi_get_mode(&mode);               \
+        if (err != ESP_OK) {                                    \
+            ESP_LOGI(TAG, "came here in disconnect if");        \
+            return;                                             \
+        }                                                       \
+    } while (0)
+
+
+
+
+
+
 static EventGroupHandle_t s_wifi_event_group;
 
 /* The event group allows multiple bits for each event,
@@ -104,7 +119,7 @@ static void wifi_connect_to_ap(uint8_t* ssid,uint8_t*password,uint8_t* bssid){
             printf("\n");
         }*/
 
-        ESP_ERROR_CHECK( esp_wifi_disconnect() );
+        WIFI_SAFE_DISCONNECT();
         ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
         esp_wifi_connect();
 }
@@ -164,14 +179,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         //This extra logic of getting mode and checking is added because at reboot after ota,
         //The code resumed from here and called stored_ssid_connection_attemp() which further
         //disconnet with assert anc device crasheed bcz wifi not init yer
-        wifi_mode_t mode;
-        esp_err_t err = esp_wifi_get_mode(&mode);
-        ESP_LOGI(TAG,"came here in disconnect");
-        if (err != ESP_OK) {
-
-        ESP_LOGI(TAG,"came here in disconnect if");
-          return;
-        } 
+        
 
         if(storage_connect_success == true)
             stored_ssid_connection_attemp();
