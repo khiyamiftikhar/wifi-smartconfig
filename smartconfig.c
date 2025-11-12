@@ -303,7 +303,9 @@ esp_err_t wifi_initialize(wifi_smartconfig_t* config){
 
     ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );
     ESP_ERROR_CHECK( esp_wifi_start() );
-    ESP_ERROR_CHECK( esp_wifi_set_ps(WIFI_PS_NONE) );
+
+    if(!config->power_save)
+        ESP_ERROR_CHECK( esp_wifi_set_ps(WIFI_PS_NONE) );
 
 
     ESP_LOGI(TAG,"wifi task creating");
