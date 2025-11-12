@@ -9,6 +9,7 @@ typedef void (*wifi_connect_success_callback)(void);
 typedef struct{
     //Calls when connection success. added because espnow requires it
     wifi_connect_success_callback callback;
+    bool power_save;
 
 }wifi_smartconfig_t;
 

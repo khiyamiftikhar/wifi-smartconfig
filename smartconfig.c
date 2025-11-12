@@ -106,12 +106,8 @@ static esp_err_t scan_live_wifi_access_points(wifi_ap_record_t* ap_records,uint1
 
 static esp_err_t wifi_connect_to_ap(uint8_t* ssid,uint8_t*password,uint8_t* bssid){
 
-    //smartconfig_event_got_ssid_pswd_t *evt = (smartconfig_event_got_ssid_pswd_t *)event_data;
-    wifi_config_t wifi_config;
-    //uint8_t ssid[33] = { 0 };
-    //uint8_t password[65] = { 0 };
-    //uint8_t rvd_data[33] = { 0 };
 
+    wifi_config_t wifi_config;
     bzero(&wifi_config, sizeof(wifi_config_t));
     memcpy(wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid));
     memcpy(wifi_config.sta.password, password, sizeof(wifi_config.sta.password));
@@ -149,10 +145,6 @@ static esp_err_t wifi_connect_to_ap(uint8_t* ssid,uint8_t*password,uint8_t* bssi
 
 static esp_err_t stored_ssid_connection_attempt(wifi_ap_record_t* ap_scanned){
 
-    ///uint16_t ap_count = 3;
-    ///wifi_ap_record_t ap_records[ap_count];          //Live scan records
-    ///scan_live_wifi_access_points(ap_records,ap_count);       //Scan for access points and get results
-                                                                //in ap_records array
 
     //This is not correct. The loop should actually run equal to total number of records which can be less  thaan max
     ap_info_t ap_record={0};          //Record from the storafe
@@ -166,11 +158,6 @@ static esp_err_t stored_ssid_connection_attempt(wifi_ap_record_t* ap_scanned){
     
 
     return ERR_SSID_NOT_FOUND;
-    //if not found then attemp connection by any wronng password so that disconnect event occurs
-    //This could crash bcausse there maynot be even a single record
-    //uint8_t wrong_password[]={1,2,3,4,5,6,7,8};
-   // ESP_LOGI(TAG,"Wrong pass attempted to init the process anyway");
-   // wifi_connect_to_ap(ap_records[0].ssid,wrong_password,NULL);
 }
 
 
@@ -213,13 +200,6 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         
      else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 
-        //If previously success in connecting from local record, then again use local
-
-        
-        //This extra logic of getting mode and checking is added because at reboot after ota,
-        //The code resumed from here and called stored_ssid_connection_attemp() which further
-        //disconnet with assert anc device crasheed bcz wifi not init yer
-        
 
         xEventGroupSetBits(wifi_state.wifi_event_group,WIFI_EVENT_DISCONNECTED_BIT);
                 
@@ -323,6 +303,7 @@ esp_err_t wifi_initialize(wifi_smartconfig_t* config){
 
     ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );
     ESP_ERROR_CHECK( esp_wifi_start() );
+    ESP_ERROR_CHECK( esp_wifi_set_ps(WIFI_PS_NONE) );
 
 
     ESP_LOGI(TAG,"wifi task creating");
@@ -351,34 +332,15 @@ esp_err_t wifi_initialize(wifi_smartconfig_t* config){
         wifi_state.callback=config->callback;
     else
         wifi_state.callback=NULL;
-    
+
+       
     ap_records_print_all();
+
+    //by default it is true;
+    wifi_state.attemp_reconnect=true;
     return 0;
 }
 
-/*
-static void smartconfig_example_task(void * parm){
-    EventBits_t uxBits;
-    ESP_ERROR_CHECK( esp_smartconfig_set_type(SC_TYPE_ESPTOUCH) );
-    smartconfig_start_config_t cfg = SMARTCONFIG_START_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK( esp_smartconfig_start(&cfg) );
-    while (1) {
-        uxBits = xEventGroupWaitBits(wifi_state.wifi_event_group, WIFI_EVENT_CONNECTED_BIT | WIFI_EVENT_ESPTOUCH_DONE_BIT, true, false, portMAX_DELAY);
-        if(uxBits & WIFI_EVENT_CONNECTED_BIT) {
-            ESP_LOGI(TAG, "WiFi Connected to ap");
-
-            ap_records_add((const char*) wifi_config.sta.ssid, (const char*) wifi_config.sta.password, NULL);   //add to the array
-            ap_records_save();              //save to non volatile
-        }
-        if(uxBits & ESPTOUCH_DONE_BIT) {
-            ESP_LOGI(TAG, "smartconfig over");
-            
-            esp_smartconfig_stop();
-            vTaskDelete(NULL);
-        }
-    }
-}
-*/
 
 
 static esp_err_t wifi_stored_ap_record_connect(){
