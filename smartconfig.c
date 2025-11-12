@@ -26,7 +26,7 @@
 
 #define     MAX_SCANNED_AP                  6
 #define     WIFI_RECONNECT_ATTEMPTS         3
-
+#define     ERR_SSID_NOT_FOUND                  -99
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
 #define WIFI_API_CALL_PROCEED_CHECK(label)                  \
     do {                                                    \
@@ -79,7 +79,7 @@ static struct {
 
 }wifi_state={0};
 
-static void smartconfig_example_task(void * parm);
+//static void smartconfig_example_task(void * parm);
 static void wifi_task(void* args);
 
 
@@ -161,11 +161,11 @@ static esp_err_t stored_ssid_connection_attempt(wifi_ap_record_t* ap_scanned){
         
     if(ap_records_find_by_ssid((const char*)ap_scanned->ssid, &ap_record, &index)==ESP_OK){
         //Use the live AP SSID, password from the record and live ap bssid
-        wifi_connect_to_ap(ap_scanned->ssid,ap_record.password,ap_scanned->bssid);
-        return ;
+        return wifi_connect_to_ap(ap_scanned->ssid,ap_record.password,ap_scanned->bssid);
     }
     
 
+    return ERR_SSID_NOT_FOUND;
     //if not found then attemp connection by any wronng password so that disconnect event occurs
     //This could crash bcausse there maynot be even a single record
     //uint8_t wrong_password[]={1,2,3,4,5,6,7,8};
@@ -305,9 +305,6 @@ void wifi_set_reconnect(bool reconnect){
 esp_err_t wifi_initialize(wifi_smartconfig_t* config){
 
 
-    BaseType_t ret= xTaskCreate(wifi_task, "wifi task", 4096, NULL, 3, &wifi_state.wifi_task_handle);
-
-    ESP_ERROR_CHECK(ret==pdFAIL);
     
 
     ESP_ERROR_CHECK( nvs_flash_init() );    //Should be removed if main initalizes it
@@ -327,6 +324,15 @@ esp_err_t wifi_initialize(wifi_smartconfig_t* config){
     ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );
     ESP_ERROR_CHECK( esp_wifi_start() );
 
+
+    ESP_LOGI(TAG,"wifi task creating");
+    BaseType_t err= xTaskCreate(wifi_task, "wifi task", 4096, NULL, 5, &wifi_state.wifi_task_handle);
+
+    ESP_LOGI(TAG,"wifi task creation done");
+
+    ESP_ERROR_CHECK(err==pdFAIL);
+    
+
     esp_err_t ret=0;
     ret=ap_records_init();
 
@@ -345,6 +351,7 @@ esp_err_t wifi_initialize(wifi_smartconfig_t* config){
         wifi_state.callback=config->callback;
     else
         wifi_state.callback=NULL;
+    
     ap_records_print_all();
     return 0;
 }
@@ -376,10 +383,10 @@ static void smartconfig_example_task(void * parm){
 
 static esp_err_t wifi_stored_ap_record_connect(){
 
-    
+    esp_err_t ret=0;
     wifi_ap_record_t ap_scan_results[MAX_SCANNED_AP];          //Live scan records
     uint16_t ap_count=MAX_SCANNED_AP;
-    uint8_t reconnect_attempts=WIFI_RECONNECT_ATTEMPTS;
+    //uint8_t reconnect_attempts=WIFI_RECONNECT_ATTEMPTS;
     EventBits_t uxBits;
     //As input parameter it tells the size of record array, and as output it tells the actual number read
     scan_live_wifi_access_points(ap_scan_results,&ap_count);       //Scan for access points and get results
@@ -388,13 +395,23 @@ static esp_err_t wifi_stored_ap_record_connect(){
         for(uint8_t i=0;i<ap_count;i++){
             
             for(uint8_t j=0;j<WIFI_RECONNECT_ATTEMPTS;j++){
-                stored_ssid_connection_attempt(&ap_scan_results[i]);
-                //Wait for any of the events to occur
+                ret=stored_ssid_connection_attempt(&ap_scan_results[i]);
+                
+                //If not found then break from this loop, and try next ssid
+                if(ret==ERR_SSID_NOT_FOUND){
+                    break;
+                }
+                //If some other reason of not sucess, then skip wait and try again
+                else if(ret!=ESP_OK){
+                    continue;
+                }
+
+                //if success then wait for any of the events to occur
                 uxBits=xEventGroupWaitBits(wifi_state.wifi_event_group,
                                 WIFI_EVENT_CONNECTED_BIT|WIFI_EVENT_DISCONNECTED_BIT,
                                 pdTRUE,pdFALSE,portMAX_DELAY);
 
-                if(uxBits&WIFI_EVENT_CONNECTED_BIT==pdTRUE){
+                if(uxBits&WIFI_EVENT_CONNECTED_BIT){
                     return ESP_OK;
                 }
             }
@@ -448,7 +465,7 @@ static esp_err_t wifi_smartconfig_connect(){
         
         //If success then add the ssid record to NVS
         if(ret==ESP_OK){
-            add_success_ssid_record(wifi_config.sta.ssid,wifi_config.sta.password);
+            add_success_ssid_record((const char*)wifi_config.sta.ssid,(const char*)wifi_config.sta.password);
         }
         esp_smartconfig_stop();
         return ESP_OK;
