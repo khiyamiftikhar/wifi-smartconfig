@@ -23,6 +23,10 @@
 #include "esp_mac.h"
 #include  "ap_record.h"
 #include  "smartconfig.h"
+
+#define     MAX_SCANNED_AP                  6
+#define     WIFI_RECONNECT_ATTEMPTS         3
+
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
 #define WIFI_API_CALL_PROCEED_CHECK(label)                  \
     do {                                                    \
@@ -37,13 +41,17 @@
 
 
 
-static EventGroupHandle_t s_wifi_event_group;
+
 
 /* The event group allows multiple bits for each event,
    but we only care about one event - are we connected
    to the AP with an IP? */
-static const int CONNECTED_BIT = BIT0;
-static const int ESPTOUCH_DONE_BIT = BIT1;
+
+static const int WIFI_EVENT_INIT_BIT = BIT0;
+static const int WIFI_EVENT_CONNECTED_BIT = BIT1;
+static const int WIFI_EVENT_DISCONNECTED_BIT = BIT2;
+
+static const int WIFI_EVENT_ESPTOUCH_DONE_BIT = BIT3;
 static const char *TAG = "smartconfig_example";
 
 //If record is already trieed for connection then try smartconfig, otherwise first try using record
@@ -52,14 +60,27 @@ static bool storage_connect_tried=false;
 static bool storage_connect_success=false; 
 
 
+typedef enum{
+    WIFI_STATE_INIT=0,
+    WIFI_STATE_ATTEMPT_SMARTCONFIG,
+    WIFI_STATE_CONNECTED, 
+
+}wifi_protocol_state_t;
+
+
 
 static struct {
+    TaskHandle_t wifi_task_handle;
+    EventGroupHandle_t wifi_event_group;
     wifi_connect_success_callback callback;
+    bool attemp_reconnect;
+    wifi_protocol_state_t state;
+    
 
 }wifi_state={0};
 
 static void smartconfig_example_task(void * parm);
-
+static void wifi_task(void* args);
 
 
 
@@ -67,7 +88,7 @@ static void smartconfig_example_task(void * parm);
 /// @param ap_records 
 /// @param ap_count 
 /// @return 
-esp_err_t scan_live_wifi_access_points(wifi_ap_record_t* ap_records,uint16_t ap_count){
+static esp_err_t scan_live_wifi_access_points(wifi_ap_record_t* ap_records,uint16_t* ap_count){
         
         
         wifi_scan_config_t scan_config = {
@@ -78,12 +99,12 @@ esp_err_t scan_live_wifi_access_points(wifi_ap_record_t* ap_records,uint16_t ap_
         };  
         esp_err_t err_check=esp_wifi_scan_start(&scan_config, true);    //This value is stored in dynamically allocated mem
         
-        err_check=esp_wifi_scan_get_ap_records(&ap_count, ap_records); //gets data from the previous scan
+        err_check=esp_wifi_scan_get_ap_records(ap_count, ap_records); //gets data from the previous scan
     return err_check;
 }
 
 
-static void wifi_connect_to_ap(uint8_t* ssid,uint8_t*password,uint8_t* bssid){
+static esp_err_t wifi_connect_to_ap(uint8_t* ssid,uint8_t*password,uint8_t* bssid){
 
     //smartconfig_event_got_ssid_pswd_t *evt = (smartconfig_event_got_ssid_pswd_t *)event_data;
     wifi_config_t wifi_config;
@@ -105,8 +126,8 @@ static void wifi_connect_to_ap(uint8_t* ssid,uint8_t*password,uint8_t* bssid){
 #endif
 */
                 
-        ESP_LOGI(TAG, "SSID:%s", ssid);
-        ESP_LOGI(TAG, "PASSWORD:%s", password);
+    ESP_LOGI(TAG, "SSID:%s", ssid);
+    ESP_LOGI(TAG, "PASSWORD:%s", password);
         /*
         if (evt->type == SC_TYPE_ESPTOUCH_V2) {
             ESP_ERROR_CHECK( esp_smartconfig_get_rvd_data(rvd_data, sizeof(rvd_data)) );
@@ -118,45 +139,60 @@ static void wifi_connect_to_ap(uint8_t* ssid,uint8_t*password,uint8_t* bssid){
         }*/
 
         //Checks if wifi api is initalized before proceeding to the calls
-        WIFI_API_CALL_PROCEED_CHECK(if_fails);
-        ESP_ERROR_CHECK(esp_wifi_disconnect());
-        WIFI_API_CALL_PROCEED_CHECK(if_fails);
-        ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
-        esp_wifi_connect();
-
-        if_fails:
-            return;
-
+    /*ESP_ERROR_CHECK(*/esp_wifi_disconnect();//);
+    ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
+    return esp_wifi_connect();
+       
 }
 
 
 
-static void stored_ssid_connection_attemp(){
+static esp_err_t stored_ssid_connection_attempt(wifi_ap_record_t* ap_scanned){
 
-    uint16_t ap_count = 3;
-    wifi_ap_record_t ap_records[ap_count];          //Live scan records
-    scan_live_wifi_access_points(ap_records,ap_count);       //Scan for access points and get results
+    ///uint16_t ap_count = 3;
+    ///wifi_ap_record_t ap_records[ap_count];          //Live scan records
+    ///scan_live_wifi_access_points(ap_records,ap_count);       //Scan for access points and get results
                                                                 //in ap_records array
 
     //This is not correct. The loop should actually run equal to total number of records which can be less  thaan max
-    ap_info_t ap_info={0};          //Record from the storafe
-    int index;
-    for(uint8_t i=0;i<ap_count;i++){
+    ap_info_t ap_record={0};          //Record from the storafe
+    int index=0;
+    
         
-        if(ap_records_find_by_ssid((const char*)ap_records[i].ssid, &ap_info, &index)==ESP_OK){
-            //Use the live AP SSID, password from the record and live ap bssid
-            wifi_connect_to_ap(ap_records[i].ssid,ap_info.password,ap_records[i].bssid);
-            return;
-        }
-
-    }       
+    if(ap_records_find_by_ssid((const char*)ap_scanned->ssid, &ap_record, &index)==ESP_OK){
+        //Use the live AP SSID, password from the record and live ap bssid
+        wifi_connect_to_ap(ap_scanned->ssid,ap_record.password,ap_scanned->bssid);
+        return ;
+    }
+    
 
     //if not found then attemp connection by any wronng password so that disconnect event occurs
     //This could crash bcausse there maynot be even a single record
-    uint8_t wrong_password[]={1,2,3,4,5,6,7,8};
-    ESP_LOGI(TAG,"Wrong pass attempted to init the process anyway");
-    wifi_connect_to_ap(ap_records[0].ssid,wrong_password,NULL);
+    //uint8_t wrong_password[]={1,2,3,4,5,6,7,8};
+   // ESP_LOGI(TAG,"Wrong pass attempted to init the process anyway");
+   // wifi_connect_to_ap(ap_records[0].ssid,wrong_password,NULL);
 }
+
+
+static esp_err_t stored_ssid_delete_record(wifi_ap_record_t* ap_scanned){
+
+    return ap_records_remove_by_ssid((const char*)ap_scanned->ssid);
+
+}
+
+
+static esp_err_t add_success_ssid_record(const char* ssid,const char* password){
+
+    esp_err_t ret=0;
+    if(ap_records_add(ssid,password,NULL)==ESP_OK)
+        ret=ap_records_save();              //save to non volatile
+
+    return ret;
+
+}
+
+
+
 
 
 static void event_handler(void* arg, esp_event_base_t event_base,
@@ -167,12 +203,11 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         //First check if can be connected to any available AP because it is in record
         //If no record found then proceed to smartconfig
 
+        //The task is waiting for this signal
+        xEventGroupSetBits(wifi_state.wifi_event_group,WIFI_EVENT_INIT_BIT);
+
         storage_connect_tried=true; 
         storage_connect_success=false; 
-
-        //Try to  connect using local record
-        stored_ssid_connection_attemp();
-                                                           
     }
 
         
@@ -186,17 +221,13 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         //disconnet with assert anc device crasheed bcz wifi not init yer
         
 
-        if(storage_connect_success == true)
-            stored_ssid_connection_attemp();
-
-        else {   //Try smartconfig
-            xTaskCreate(smartconfig_example_task, "smartconfig_example_task", 4096, NULL, 3, NULL);
-        }
-        
-        xEventGroupClearBits(s_wifi_event_group, CONNECTED_BIT);
+        xEventGroupSetBits(wifi_state.wifi_event_group,WIFI_EVENT_DISCONNECTED_BIT);
+                
+        xEventGroupClearBits(wifi_state.wifi_event_group, WIFI_EVENT_CONNECTED_BIT);
     
     }else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
-    
+        
+        
         
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -206,7 +237,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         //Now inform the user that connection complete
         if(wifi_state.callback!=NULL)
             wifi_state.callback();
-        xEventGroupSetBits(s_wifi_event_group, CONNECTED_BIT);
+        xEventGroupSetBits(wifi_state.wifi_event_group, WIFI_EVENT_CONNECTED_BIT);
 
 
     } else if (event_base == SC_EVENT && event_id == SC_EVENT_SCAN_DONE) {
@@ -216,6 +247,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == SC_EVENT && event_id == SC_EVENT_GOT_SSID_PSWD) {
         ESP_LOGI(TAG, "Got SSID and password");
 
+ 
         smartconfig_event_got_ssid_pswd_t *evt = (smartconfig_event_got_ssid_pswd_t *)event_data;
         wifi_config_t wifi_config;
         uint8_t ssid[33] = { 0 };
@@ -229,8 +261,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         //This is not optimum as user may have supplied the wrong password
         //So it should only be added when connection is successful, but right how
         //how to get this ssid and oassat that event
-        ap_records_add((const char*) wifi_config.sta.ssid, (const char*) wifi_config.sta.password, NULL);   //add to the array
-        ap_records_save();              //save to non volatile
+        
 #ifdef CONFIG_SET_MAC_ADDRESS_OF_TARGET_AP
         wifi_config.sta.bssid_set = evt->bssid_set;
         if (wifi_config.sta.bssid_set == true) {
@@ -255,17 +286,33 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         }
 
         ESP_ERROR_CHECK( esp_wifi_disconnect() );
+        ESP_LOGI(TAG, "Setting config");
         ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
         esp_wifi_connect();
     } else if (event_base == SC_EVENT && event_id == SC_EVENT_SEND_ACK_DONE) {
-        xEventGroupSetBits(s_wifi_event_group, ESPTOUCH_DONE_BIT);
+        xEventGroupSetBits(wifi_state.wifi_event_group, WIFI_EVENT_ESPTOUCH_DONE_BIT);
     }
 }
 
-esp_err_t initialise_wifi(wifi_smartconfig_t* config){
+
+
+void wifi_set_reconnect(bool reconnect){
+
+
+    wifi_state.attemp_reconnect=reconnect;
+}
+
+esp_err_t wifi_initialize(wifi_smartconfig_t* config){
+
+
+    BaseType_t ret= xTaskCreate(wifi_task, "wifi task", 4096, NULL, 3, &wifi_state.wifi_task_handle);
+
+    ESP_ERROR_CHECK(ret==pdFAIL);
+    
+
     ESP_ERROR_CHECK( nvs_flash_init() );    //Should be removed if main initalizes it
     ESP_ERROR_CHECK(esp_netif_init());
-    s_wifi_event_group = xEventGroupCreate();
+    wifi_state.wifi_event_group = xEventGroupCreate();
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
     assert(sta_netif);
@@ -302,15 +349,19 @@ esp_err_t initialise_wifi(wifi_smartconfig_t* config){
     return 0;
 }
 
+/*
 static void smartconfig_example_task(void * parm){
     EventBits_t uxBits;
     ESP_ERROR_CHECK( esp_smartconfig_set_type(SC_TYPE_ESPTOUCH) );
     smartconfig_start_config_t cfg = SMARTCONFIG_START_CONFIG_DEFAULT();
     ESP_ERROR_CHECK( esp_smartconfig_start(&cfg) );
     while (1) {
-        uxBits = xEventGroupWaitBits(s_wifi_event_group, CONNECTED_BIT | ESPTOUCH_DONE_BIT, true, false, portMAX_DELAY);
-        if(uxBits & CONNECTED_BIT) {
+        uxBits = xEventGroupWaitBits(wifi_state.wifi_event_group, WIFI_EVENT_CONNECTED_BIT | WIFI_EVENT_ESPTOUCH_DONE_BIT, true, false, portMAX_DELAY);
+        if(uxBits & WIFI_EVENT_CONNECTED_BIT) {
             ESP_LOGI(TAG, "WiFi Connected to ap");
+
+            ap_records_add((const char*) wifi_config.sta.ssid, (const char*) wifi_config.sta.password, NULL);   //add to the array
+            ap_records_save();              //save to non volatile
         }
         if(uxBits & ESPTOUCH_DONE_BIT) {
             ESP_LOGI(TAG, "smartconfig over");
@@ -320,4 +371,147 @@ static void smartconfig_example_task(void * parm){
         }
     }
 }
+*/
 
+
+static esp_err_t wifi_stored_ap_record_connect(){
+
+    
+    wifi_ap_record_t ap_scan_results[MAX_SCANNED_AP];          //Live scan records
+    uint16_t ap_count=MAX_SCANNED_AP;
+    uint8_t reconnect_attempts=WIFI_RECONNECT_ATTEMPTS;
+    EventBits_t uxBits;
+    //As input parameter it tells the size of record array, and as output it tells the actual number read
+    scan_live_wifi_access_points(ap_scan_results,&ap_count);       //Scan for access points and get results
+    
+    if(ap_count>0){
+        for(uint8_t i=0;i<ap_count;i++){
+            
+            for(uint8_t j=0;j<WIFI_RECONNECT_ATTEMPTS;j++){
+                stored_ssid_connection_attempt(&ap_scan_results[i]);
+                //Wait for any of the events to occur
+                uxBits=xEventGroupWaitBits(wifi_state.wifi_event_group,
+                                WIFI_EVENT_CONNECTED_BIT|WIFI_EVENT_DISCONNECTED_BIT,
+                                pdTRUE,pdFALSE,portMAX_DELAY);
+
+                if(uxBits&WIFI_EVENT_CONNECTED_BIT==pdTRUE){
+                    return ESP_OK;
+                }
+            }
+                //If it doesn exit , it means that record has wrong password , so remove that record
+                stored_ssid_delete_record(&ap_scan_results[i]);
+
+        }
+
+    }
+
+    return ESP_FAIL;
+}
+
+
+static esp_err_t wifi_smartconfig_connect(){
+    
+    esp_err_t ret=0;
+    EventBits_t uxBits;
+    ESP_ERROR_CHECK( esp_smartconfig_set_type(SC_TYPE_ESPTOUCH) );
+    smartconfig_start_config_t cfg = SMARTCONFIG_START_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK( esp_smartconfig_start(&cfg) );
+    
+    uxBits = xEventGroupWaitBits(wifi_state.wifi_event_group, WIFI_EVENT_DISCONNECTED_BIT | WIFI_EVENT_ESPTOUCH_DONE_BIT, true, false, portMAX_DELAY);
+    
+    /*
+    if(uxBits & WIFI_EVENT_CONNECTED_BIT) {
+        ESP_LOGI(TAG, "WiFi Connected to ap");
+        //If success then add it to record
+        wifi_config_t wifi_config;
+        ret = esp_wifi_get_config(WIFI_IF_STA, &wifi_config);
+        
+        //If success then add the ssid record to NVS
+        if(ret==ESP_OK){
+            add_success_ssid_record(wifi_config.sta.ssid,wifi_config.sta.password);
+        }
+        return ESP_OK;
+    }*/
+    
+    if(uxBits & WIFI_EVENT_DISCONNECTED_BIT) {
+        ESP_LOGI(TAG, "WiFi DisConnected frim ap");
+        //If success then add it to record
+        
+        return ESP_FAIL;
+    }
+    
+    if(uxBits & WIFI_EVENT_ESPTOUCH_DONE_BIT) {
+        ESP_LOGI(TAG, "smartconfig over");
+        wifi_config_t wifi_config;
+        
+        ret = esp_wifi_get_config(WIFI_IF_STA, &wifi_config);
+        
+        //If success then add the ssid record to NVS
+        if(ret==ESP_OK){
+            add_success_ssid_record(wifi_config.sta.ssid,wifi_config.sta.password);
+        }
+        esp_smartconfig_stop();
+        return ESP_OK;
+    
+    }
+
+    return ESP_FAIL;
+
+}
+
+static void wifi_task(void* args){
+
+    EventBits_t uxBits;
+    esp_err_t ret=0;
+    wifi_protocol_state_t next_state=0;
+    while(1){
+            switch(wifi_state.state){
+
+                case WIFI_STATE_INIT:
+                    uxBits=xEventGroupWaitBits(wifi_state.wifi_event_group,WIFI_EVENT_INIT_BIT,pdTRUE,pdTRUE,portMAX_DELAY);
+
+                    if (uxBits & WIFI_EVENT_INIT_BIT) {
+
+                        ret=wifi_stored_ap_record_connect();
+                        if(ret==ESP_OK){
+                            next_state=WIFI_STATE_CONNECTED;
+                        }
+                        else{
+                            next_state=WIFI_STATE_ATTEMPT_SMARTCONFIG;
+                        }
+                    }
+                    break;
+                    
+                    
+                case WIFI_STATE_ATTEMPT_SMARTCONFIG:
+                    ret=wifi_smartconfig_connect();
+                            if(ret==ESP_OK){
+                                    next_state=WIFI_STATE_CONNECTED;
+                    
+                            }
+                    break;
+
+                case WIFI_STATE_CONNECTED:
+                    uxBits=xEventGroupWaitBits(wifi_state.wifi_event_group,WIFI_EVENT_DISCONNECTED_BIT,pdTRUE,pdTRUE,portMAX_DELAY);
+                    if (uxBits & WIFI_EVENT_DISCONNECTED_BIT) {
+                        if(wifi_state.attemp_reconnect==true)
+                            next_state=WIFI_STATE_INIT;
+                    }
+
+                    break;
+
+                default:
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    break;
+
+            }
+
+
+                wifi_state.state=next_state;
+
+    }
+
+
+
+
+}

@@ -12,8 +12,10 @@ typedef struct{
 
 }wifi_smartconfig_t;
 
-
-esp_err_t initialise_wifi(wifi_smartconfig_t* config);
+/// @brief Set the attempt to reconnect on a disconnect to true or false. if set false it will not try to reconnect
+/// @param reconnect 
+void wifi_set_reconnect(bool reconnect);
+esp_err_t wifi_initialize(wifi_smartconfig_t* config);
 
 
 
