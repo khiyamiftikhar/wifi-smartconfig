@@ -380,7 +380,7 @@ static esp_err_t wifi_stored_ap_record_connect(){
                 }
             }
                 //If it doesn exit , it means that record has wrong password , so remove that record
-                stored_ssid_delete_record(&ap_scan_results[i]);
+                //stored_ssid_delete_record(&ap_scan_results[i]);
 
         }
 
