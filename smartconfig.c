@@ -26,7 +26,8 @@
 
 #define     MAX_SCANNED_AP                  6
 #define     WIFI_RECONNECT_ATTEMPTS         3
-#define     ERR_SSID_NOT_FOUND                  -99
+#define     ERR_WIFI_SSID_NOT_FOUND          -99
+#define     ERR_WIFI_NO_LIVE_AP_FOUND        -100
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
 #define WIFI_API_CALL_PROCEED_CHECK(label)                  \
     do {                                                    \
@@ -62,8 +63,10 @@ static bool storage_connect_success=false;
 
 typedef enum{
     WIFI_STATE_INIT=0,
+    WIFI_STATE_ATTEMPT_STORED_AP_RECORD_CONNECT,
     WIFI_STATE_ATTEMPT_SMARTCONFIG,
     WIFI_STATE_CONNECTED, 
+
 
 }wifi_protocol_state_t;
 
@@ -157,7 +160,7 @@ static esp_err_t stored_ssid_connection_attempt(wifi_ap_record_t* ap_scanned){
     }
     
 
-    return ERR_SSID_NOT_FOUND;
+    return ERR_WIFI_SSID_NOT_FOUND;
 }
 
 
@@ -350,41 +353,53 @@ static esp_err_t wifi_stored_ap_record_connect(){
     esp_err_t ret=0;
     wifi_ap_record_t ap_scan_results[MAX_SCANNED_AP];          //Live scan records
     uint16_t ap_count=MAX_SCANNED_AP;
+    bool ssid_found=false;
     //uint8_t reconnect_attempts=WIFI_RECONNECT_ATTEMPTS;
     EventBits_t uxBits;
     //As input parameter it tells the size of record array, and as output it tells the actual number read
     scan_live_wifi_access_points(ap_scan_results,&ap_count);       //Scan for access points and get results
+    if(ap_count==0){
+        return ERR_WIFI_NO_LIVE_AP_FOUND;
+    }
     
-    if(ap_count>0){
-        for(uint8_t i=0;i<ap_count;i++){
+    
+    for(uint8_t i=0;i<ap_count;i++){
+        
+        for(uint8_t j=0;j<WIFI_RECONNECT_ATTEMPTS;j++){
+            ret=stored_ssid_connection_attempt(&ap_scan_results[i]);
             
-            for(uint8_t j=0;j<WIFI_RECONNECT_ATTEMPTS;j++){
-                ret=stored_ssid_connection_attempt(&ap_scan_results[i]);
-                
-                //If not found then break from this loop, and try next ssid
-                if(ret==ERR_SSID_NOT_FOUND){
-                    break;
-                }
-                //If some other reason of not sucess, then skip wait and try again
-                else if(ret!=ESP_OK){
-                    continue;
-                }
-
-                //if success then wait for any of the events to occur
-                uxBits=xEventGroupWaitBits(wifi_state.wifi_event_group,
-                                WIFI_EVENT_CONNECTED_BIT|WIFI_EVENT_DISCONNECTED_BIT,
-                                pdTRUE,pdFALSE,portMAX_DELAY);
-
-                if(uxBits&WIFI_EVENT_CONNECTED_BIT){
-                    return ESP_OK;
-                }
+            //If not found then break from this loop, and try next ssid
+            if(ret==ERR_WIFI_SSID_NOT_FOUND){
+                break;
             }
-                //If it doesn exit , it means that record has wrong password , so remove that record
-                //stored_ssid_delete_record(&ap_scan_results[i]);
+            
+            //It means ssid was found and connection attempt was made, so set this flag to true, and if it is not successful then we will try smartconfig, but if it is successful then we will wait for event to occur
+            ssid_found=true;
+            //If some other reason of not sucess, then skip wait and try again
+            if(ret!=ESP_OK){
+                continue;
+            }
 
+
+
+            //if success then wait for any of the events to occur
+            uxBits=xEventGroupWaitBits(wifi_state.wifi_event_group,
+                            WIFI_EVENT_CONNECTED_BIT|WIFI_EVENT_DISCONNECTED_BIT,
+                            pdTRUE,pdFALSE,portMAX_DELAY);
+
+            if(uxBits&WIFI_EVENT_CONNECTED_BIT){
+                return ESP_OK;
+            }
         }
+            //If it doesn exit , it means that record has wrong password , so remove that record
+            //stored_ssid_delete_record(&ap_scan_results[i]);
 
     }
+
+    if(ssid_found==false){
+        return ERR_WIFI_SSID_NOT_FOUND;
+    }
+
 
     return ESP_FAIL;
 }
@@ -440,27 +455,49 @@ static esp_err_t wifi_smartconfig_connect(){
 
 }
 
+#define BOOT_TIMEOUT_SECONDS 120
+
 static void wifi_task(void* args){
 
     EventBits_t uxBits;
     esp_err_t ret=0;
     wifi_protocol_state_t next_state=0;
+
+    int start_time_seconds = pdTICKS_TO_MS(xTaskGetTickCount()) / 1000;
+
     while(1){
             switch(wifi_state.state){
 
                 case WIFI_STATE_INIT:
                     uxBits=xEventGroupWaitBits(wifi_state.wifi_event_group,WIFI_EVENT_INIT_BIT,pdTRUE,pdTRUE,portMAX_DELAY);
 
-                    if (uxBits & WIFI_EVENT_INIT_BIT) {
 
-                        ret=wifi_stored_ap_record_connect();
-                        if(ret==ESP_OK){
-                            next_state=WIFI_STATE_CONNECTED;
-                        }
-                        else{
+                    if (uxBits & WIFI_EVENT_INIT_BIT) {
+                        next_state=WIFI_STATE_ATTEMPT_STORED_AP_RECORD_CONNECT;
+                        
+                    }
+                    break;
+
+                case WIFI_STATE_ATTEMPT_STORED_AP_RECORD_CONNECT:
+                    int current_time_seconds = pdTICKS_TO_MS(xTaskGetTickCount()) / 1000;
+                    ret=wifi_stored_ap_record_connect();
+                    //if no AP found then keep trying indefinitely until found one
+                    if(ret==ERR_WIFI_NO_LIVE_AP_FOUND){
+                        //Wait and try again may be wifi router is also booting 
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                        break;
+                    }
+                    //If AP is found but not in record then keep trying until time out bcz maybe router is booting
+                    else if(ret==ERR_WIFI_SSID_NOT_FOUND){
+                        if(current_time_seconds - start_time_seconds > BOOT_TIMEOUT_SECONDS){ // If more than 120 seconds have passed
                             next_state=WIFI_STATE_ATTEMPT_SMARTCONFIG;
                         }
+                    }   
+
+                    else if(ret==ESP_OK){
+                        next_state=WIFI_STATE_CONNECTED;
                     }
+                    
                     break;
                     
                     
