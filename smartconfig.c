@@ -493,12 +493,11 @@ static void wifi_task(void* args){
                             next_state=WIFI_STATE_ATTEMPT_SMARTCONFIG;
                         }
                     }   
-                    if(ret==ESP_OK){
+
+                    else if(ret==ESP_OK){
                         next_state=WIFI_STATE_CONNECTED;
                     }
-                    else{
-                        next_state=WIFI_STATE_ATTEMPT_SMARTCONFIG;
-                    }
+                    
                     break;
                     
                     
