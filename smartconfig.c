@@ -512,8 +512,10 @@ static void wifi_task(void* args){
                 case WIFI_STATE_CONNECTED:
                     uxBits=xEventGroupWaitBits(wifi_state.wifi_event_group,WIFI_EVENT_DISCONNECTED_BIT,pdTRUE,pdTRUE,portMAX_DELAY);
                     if (uxBits & WIFI_EVENT_DISCONNECTED_BIT) {
-                        if(wifi_state.attemp_reconnect==true)
-                            next_state=WIFI_STATE_INIT;
+                        if(wifi_state.attemp_reconnect==true){
+                            next_state=WIFI_STATE_ATTEMPT_STORED_AP_RECORD_CONNECT;
+                            start_time_seconds = pdTICKS_TO_MS(xTaskGetTickCount()) / 1000;
+                        }
                     }
 
                     break;
