@@ -203,7 +203,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         
      else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 
-        ESP_LOGI(TAG, "Disconnected from AP");
+        ESP_LOGI(TAG, "event Disconnected from AP");
         xEventGroupSetBits(wifi_state.wifi_event_group,WIFI_EVENT_DISCONNECTED_BIT);
                 
         xEventGroupClearBits(wifi_state.wifi_event_group, WIFI_EVENT_CONNECTED_BIT);
@@ -485,6 +485,7 @@ static void wifi_task(void* args){
                     //if no AP found then keep trying indefinitely until found one
                     if(ret==ERR_WIFI_NO_LIVE_AP_FOUND){
                         //Wait and try again may be wifi router is also booting 
+                        start_time_seconds=current_time_seconds;
                         vTaskDelay(pdMS_TO_TICKS(1000));
                         break;
                     }
@@ -512,6 +513,7 @@ static void wifi_task(void* args){
 
                 case WIFI_STATE_CONNECTED:
                     uxBits=xEventGroupWaitBits(wifi_state.wifi_event_group,WIFI_EVENT_DISCONNECTED_BIT,pdTRUE,pdTRUE,portMAX_DELAY);
+                    ESP_LOGI(TAG, "Waiting over for disconnect event");
                     if (uxBits & WIFI_EVENT_DISCONNECTED_BIT) {
                         if(wifi_state.attemp_reconnect==true){
                             next_state=WIFI_STATE_ATTEMPT_STORED_AP_RECORD_CONNECT;
