@@ -305,6 +305,7 @@ esp_err_t wifi_initialize(wifi_smartconfig_t* config){
     ESP_ERROR_CHECK( esp_event_handler_register(SC_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL) );
 
     ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );
+    ESP_ERROR_CHECK( esp_wifi_set_country_code("CN", false) );
     ESP_ERROR_CHECK( esp_wifi_start() );
 
     if(!config->power_save)
