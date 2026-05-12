@@ -203,7 +203,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         
      else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 
-
+        ESP_LOGI(TAG, "Disconnected from AP");
         xEventGroupSetBits(wifi_state.wifi_event_group,WIFI_EVENT_DISCONNECTED_BIT);
                 
         xEventGroupClearBits(wifi_state.wifi_event_group, WIFI_EVENT_CONNECTED_BIT);
